@@ -9,8 +9,11 @@ const session = require('express-session');
 const passport = require('passport');
 const localStrategy = require('passport-local');
 const passportLocalMongoose = require('passport-local-mongoose');
+const crypto = require('crypto');
+const axios = require('axios');
 const secret = process.env.SECRET || 'thisisasecret';
 const db_url = process.env.REGISTERLOGIN_DB_URL;
+const nodemailer_url = process.env.NODEMAILER
 const AppError = require('./errorHandling/AppError');
 
 const app = express();
@@ -31,7 +34,9 @@ const UserSchema = new mongoose.Schema({
         type: String,
         required: true,
         unique: true
-    }
+    },
+    resetPasswordToken: { type: String },
+    resetPasswordExpires: { type: Date }
 });
 
 UserSchema.plugin(passportLocalMongoose);
@@ -48,10 +53,10 @@ passport.serializeUser(User.serializeUser());
 passport.deserializeUser(User.deserializeUser());
 
 async function main() {
-   await mongoose.connect(db_url);
+    await mongoose.connect(db_url);
 }
 
-main().then(()=>conosle.log("Success")).catch((err)=>console.log(err));
+main().then(() => console.log("Success")).catch((err) => console.log(err));
 
 const registerUser = async (req, res, next) => {
     let { email, username, password } = req.body;
@@ -74,20 +79,47 @@ const registerUser = async (req, res, next) => {
 const authenticateAndLogin = (req, res, next) => {
     req.body.username = (req.body.username).toLowerCase();
 
-    passport.authenticate('local', (err, user, info) => {
-        if (err) {
-            return next(new AppError(500, "Couldn't authenticate the user."));
-        }
-        if (info) {
-            return next(new AppError(500, info.message));
-        }
-        req.login(user, err => {
+    try{
+        passport.authenticate('local', (err, user, info) => {
             if (err) {
-                return next(new AppError(500, "Couldn't log in."));
+                return next(new AppError(500, "Couldn't authenticate the user."));
             }
-            next();
+            if (info) {
+                return next(new AppError(500, info.message));
+            }
+            req.login(user, err => {
+                if (err) {
+                    return next(new AppError(500, "Couldn't log in."));
+                }
+                next();
+            })
+        })(req, res, next);
+    } catch (err) {
+        return res.status(500).send('Internal Server Error');
+    }    
+}
+
+const sendEmail = async(req, res) => {
+    //const url = 'http://localhost:3000/sendResetLink';
+    const url = `${nodemailer_url}/sendResetLink`;
+    const dataToBeSent = {
+        email: req.body.email,
+        resetToken: req.resetToken
+    }
+
+    const options = {
+        method: 'POST',
+        url: url,
+        data: dataToBeSent
+    }
+
+    await axios.request(options)
+        .then((response) => {
+            return res.status(200).send(response.data);
         })
-    })(req, res, next);
+        .catch((err) => {
+            return res.status(500).send(err.response.data);
+        });
 }
 
 app.post('/signup', registerUser, authenticateAndLogin, (req, res) => {
@@ -107,11 +139,57 @@ app.post('/logout', (req, res, next) => {
     })
 });
 
-app.use((err, req, res, next) => {
-    let { status = 400, message = "Something went wrong on the server side." } = err;
-    res.send(message);
+app.post('/checkUserExists', async (req, res) => {
+    const { email, username } = req.body;
+
+    try {
+        const userwithUsernameExists = await User.findOne({ username: username });
+        if (userwithUsernameExists) {
+            return res.status(409).send('Username already exists');
+        }
+
+        const userwithEmailExists = await User.findOne({ email: email });
+        if (userwithEmailExists) {
+            return res.status(409).send('A user with this email already exists');
+        }
+
+        return res.status(200).send("User does not exist.");
+    } catch (err) {
+        return res.status(500).send('Internal Server Error');
+    }
 });
 
-app.listen(3000, () => {
+app.post('/sendResetLink', async (req, res, next) => {
+    const email = req.body.email;
+
+    try {
+        const user = await User.findOne({ email });
+
+        if (!user) {
+            return res.status(400).send("No user found with this email");
+        }
+
+        // Generate a reset token and set an expiration time on the token
+        const resetToken = crypto.randomBytes(32).toString('hex');
+        user.resetPasswordToken = resetToken;
+        user.resetPasswordExpires = Date.now() + 3600000; // 1 hour expiration
+
+        // Save the user's token and expiration to the database
+        await user.save();
+
+        req.resetToken = resetToken;
+        next();
+    } catch (err) {
+        return res.status(500).send('Internal Server Error');
+    }
+}, sendEmail);
+
+app.use((err, req, res, next) => {
+    console.log(err)
+    let { status = 400, message = "Something went wrong on the server side." } = err;
+    res.status(status).send(message);
+});
+
+app.listen(3001, () => {
     console.log('Listening...')
 });
