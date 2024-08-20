@@ -9,6 +9,7 @@ const session = require('express-session');
 const passport = require('passport');
 const localStrategy = require('passport-local');
 const passportLocalMongoose = require('passport-local-mongoose');
+const mongoStore = require('connect-mongo');
 const crypto = require('crypto');
 const axios = require('axios');
 const secret = process.env.SECRET || 'thisisasecret';
@@ -17,7 +18,14 @@ const nodemailer_url = process.env.NODEMAILER
 const AppError = require('./errorHandling/AppError');
 
 const app = express();
+
+const store = mongoStore.create({
+    mongoUrl: db_url,
+    secret: secret,
+    touchAfter: 24 * 60 * 60
+});
 const sessionOptions = {
+    store: store,
     name: 'userSessionCookie',
     secret: secret,
     secure: true,
@@ -38,12 +46,16 @@ const UserSchema = new mongoose.Schema({
     resetPasswordToken: { type: String },
     resetPasswordExpires: { type: Date }
 });
+const corsOptions = {
+    credentials: true,
+    origin: ["https://registerlogin.ca", "https://www.registerlogin.ca"]
+};
 
 UserSchema.plugin(passportLocalMongoose);
 const User = mongoose.model('User', UserSchema);
 
 app.use(express.json());
-app.use(cors());
+app.use(cors(corsOptions));
 app.use(session(sessionOptions));
 app.use(passport.initialize());
 app.use(passport.session());
@@ -79,7 +91,7 @@ const registerUser = async (req, res, next) => {
 const authenticateAndLogin = (req, res, next) => {
     req.body.username = (req.body.username).toLowerCase();
 
-    try{
+    try {
         passport.authenticate('local', (err, user, info) => {
             if (err) {
                 return next(new AppError(500, "Couldn't authenticate the user."));
@@ -96,11 +108,10 @@ const authenticateAndLogin = (req, res, next) => {
         })(req, res, next);
     } catch (err) {
         return res.status(500).send('Internal Server Error');
-    }    
+    }
 }
 
-const sendEmail = async(req, res) => {
-    //const url = 'http://localhost:3000/sendResetLink';
+const sendEmail = async (req, res) => {
     const url = `${nodemailer_url}/sendResetLink`;
     const dataToBeSent = {
         email: req.body.email,
@@ -131,12 +142,23 @@ app.post('/login', authenticateAndLogin, (req, res) => {
 });
 
 app.post('/logout', (req, res, next) => {
-    req.logout((err) => {
-        if (err) {
-            return next(new AppError(500, "Couldn't log out."));
-        }
-        res.send('Logged out successfully.');
-    })
+    try{
+        req.logout((err) => {
+            if (err) {
+                return next(new AppError(500, "Couldn't log out."));
+            }
+            res.send('Logged out successfully.');
+        })
+    }catch (err) {
+        return res.status(500).send('Internal Server Error');
+    }    
+});
+
+app.post('/isLoggedIn', (req, res)=>{
+    if (!req.isAuthenticated()) {
+        return res.status(401).send("You must login first");
+    }
+    return res.send("User is logged in");
 });
 
 app.post('/checkUserExists', async (req, res) => {
@@ -171,21 +193,56 @@ app.post('/sendResetLink', async (req, res, next) => {
 
         // Generate a reset token and set an expiration time on the token
         const resetToken = crypto.randomBytes(32).toString('hex');
-        user.resetPasswordToken = resetToken;
+        /* Instead of saving the raw reset token in your database, hash it before storing: */
+        const hashedToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+
+        user.resetPasswordToken = hashedToken;
         user.resetPasswordExpires = Date.now() + 3600000; // 1 hour expiration
 
         // Save the user's token and expiration to the database
         await user.save();
 
-        req.resetToken = resetToken;
+        req.resetToken = hashedToken;
         next();
     } catch (err) {
         return res.status(500).send('Internal Server Error');
     }
 }, sendEmail);
 
+app.post('/resetPassword', async (req, res, next) => {
+    const { token, newPassword } = req.body;
+
+    try {
+        const user = await User.findOne({
+            resetPasswordToken: token,
+            resetPasswordExpires: { $gt: Date.now() }
+        });
+
+        if (!user) {
+            return res.status(400).send('Invalid or expired token');
+        }
+
+        // Reset the password and clear the reset token fields, make sure to use setPassword method that is available in passport-local-mongoose to hash our new password.
+        user.setPassword(newPassword, async function (err) {
+            if (err) {
+                return res.status(500).send('Error setting new password.');
+            }
+
+            // Clear the reset token and expiration
+            user.resetPasswordToken = undefined;
+            user.resetPasswordExpires = undefined;
+
+            await user.save();
+            next();
+        });
+    } catch (err) {
+        return res.status(500).send('Internal Server Error');
+    }
+}, (req, res) => {
+    res.send('Password has been successfully reset.');
+});
+
 app.use((err, req, res, next) => {
-    console.log(err)
     let { status = 400, message = "Something went wrong on the server side." } = err;
     res.status(status).send(message);
 });
