@@ -54,6 +54,7 @@ const corsOptions = {
 UserSchema.plugin(passportLocalMongoose);
 const User = mongoose.model('User', UserSchema);
 
+//app.set("trust proxy", 1);
 app.use(express.json());
 app.use(cors(corsOptions));
 app.use(session(sessionOptions));
@@ -154,13 +155,6 @@ app.post('/logout', (req, res, next) => {
     }    
 });
 
-app.post('/isLoggedIn', (req, res)=>{
-    if (!req.isAuthenticated()) {
-        return res.status(401).send("You must login first");
-    }
-    return res.send("User is logged in");
-});
-
 app.post('/checkUserExists', async (req, res) => {
     const { email, username } = req.body;
 
@@ -191,15 +185,12 @@ app.post('/sendResetLink', async (req, res, next) => {
             return res.status(400).send("No user found with this email");
         }
 
-        // Generate a reset token and set an expiration time on the token
         const resetToken = crypto.randomBytes(32).toString('hex');
-        /* Instead of saving the raw reset token in your database, hash it before storing: */
         const hashedToken = crypto.createHash('sha256').update(resetToken).digest('hex');
 
         user.resetPasswordToken = hashedToken;
-        user.resetPasswordExpires = Date.now() + 3600000; // 1 hour expiration
+        user.resetPasswordExpires = Date.now() + 3600000;
 
-        // Save the user's token and expiration to the database
         await user.save();
 
         req.resetToken = hashedToken;
@@ -222,13 +213,11 @@ app.post('/resetPassword', async (req, res, next) => {
             return res.status(400).send('Invalid or expired token');
         }
 
-        // Reset the password and clear the reset token fields, make sure to use setPassword method that is available in passport-local-mongoose to hash our new password.
         user.setPassword(newPassword, async function (err) {
             if (err) {
                 return res.status(500).send('Error setting new password.');
             }
 
-            // Clear the reset token and expiration
             user.resetPasswordToken = undefined;
             user.resetPasswordExpires = undefined;
 
@@ -240,6 +229,13 @@ app.post('/resetPassword', async (req, res, next) => {
     }
 }, (req, res) => {
     res.send('Password has been successfully reset.');
+});
+
+app.post('/isLoggedIn', (req, res)=>{
+    if (!req.isAuthenticated()) {
+        return res.status(401).send("You must login first");
+    }
+    return res.send("User is logged in");
 });
 
 app.use((err, req, res, next) => {
