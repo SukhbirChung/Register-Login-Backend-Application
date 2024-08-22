@@ -48,7 +48,7 @@ const UserSchema = new mongoose.Schema({
 });
 const corsOptions = {
     credentials: true,
-    origin: ["https://registerlogin.ca", "https://www.registerlogin.ca"]
+    origin: ["Domain that you are receiving the requests from: both with www and without www"]
 };
 
 UserSchema.plugin(passportLocalMongoose);
@@ -236,6 +236,31 @@ app.post('/isLoggedIn', (req, res)=>{
         return res.status(401).send("You must login first");
     }
     return res.send("User is logged in");
+});
+
+app.post('/deleteAccount', async (req, res)=>{
+    const userId = req.user._id;
+    
+    try {
+        await User.findByIdAndDelete(userId);
+        
+        req.logout((err) => {
+            if (err) {
+                return res.status(500).send("Couldn't log out.");
+            }
+            
+            req.session.destroy((err) => {
+                if (err) {
+                    return res.status(500).send("Error destroying session");
+                }
+            
+                res.clearCookie('userSessionCookie');
+                res.send("Account deleted successfully");
+            });
+        });
+    } catch (err) {
+        res.status(500).send("Error deleting account");
+    }
 });
 
 app.use((err, req, res, next) => {
