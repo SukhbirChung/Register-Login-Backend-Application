@@ -1,14 +1,15 @@
-# Backend NodeJS App to handle requests coming from Register/Login Page
+# Backend NodeJS App to handle requests coming from Register/Login
 
-### Purpose
-The main objective of this project is to allow users to provide their information through the signup or login page and then register or log in to their respective accounts. To achieve this, passport, passport-local, and passport-local-mongoose npm packages are utilized. These packages facilitate user authentication and authorization processes. The user data is stored in a MongoDB database, which is hosted on MongoDB Atlas.
+The main goal of this project is to let users create accounts and log in by entering their information. This app is designed with Node.js and Express.
 
-### Following POST Requests can be sent to the app
-* /login
-* /signup
-* /logout
-
-### Middlewares
-* registerUser
-* authenticateAndLogin
-* isAuthenticated
+## npm Packages Used
+* express
+* passport
+* passport-local
+* passport-local-mongoose
+* express-session
+* connect-mongo
+* crypto
+* mongoose
+* axios
+* cors
